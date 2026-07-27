@@ -1,0 +1,16 @@
+{
+  "name": "innoarq-plugins",
+  "owner": {
+    "name": "Ulises González",
+    "email": "gonzalez.ulises@gmail.com"
+  },
+  "description": "Plugins de Claude Code para flujos AEC/BIM de inno-arq y Mallol Arquitectos.",
+  "plugins": [
+    {
+      "name": "revit-bridge",
+      "source": "./",
+      "description": "Puente Claude Desktop ↔ Autodesk Revit vía MCP: instalación guiada por situación (rutas A/B) y diagnóstico.",
+      "category": "aec"
+    }
+  ]
+}
