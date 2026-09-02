@@ -117,6 +117,21 @@ Cadena: `Claude Desktop → main.py (MCP, FastMCP/uv) → pyRevit Routes (localh
 
     **No hay forma de habilitarlo en Cowork** (verificado en docs de Anthropic, 2026-08-31): los MCP locales —tanto los de `claude_desktop_config.json` como las extensiones de escritorio— solo están disponibles en **Desktop y Claude Code**; solo los **conectores remotos** (MCP por URL pública) llegan a todas las superficies. Ver [When to use desktop and web connectors](https://support.claude.com/en/articles/11725091-when-to-use-desktop-and-web-connectors). El `[warn] Extension revit-mcp not found in installed extensions` del log es justamente ese chequeo. Si alguien pide Revit en Cowork, las salidas son: (a) envolverlo en un MCP remoto con URL pública y auth propia —proyecto en sí, porque el add-in escucha en localhost **sin autenticación** y habría que exponer un puesto de trabajo—, o (b) usar **Claude Code** en esa misma Windows, que sí lee MCP locales.
 
+> Los números #11–#14 pertenecen a la **Ruta C** (más abajo). La numeración es global para que
+> las referencias cruzadas de este documento no se rompan al añadir casos.
+
+15. **El instalador de Node.js falla si el usuario no es administrador — y da igual.** (Visto 2026-09-01, máquina `ahim`.) El wizard ofrece instalar Node LTS (opción `1`) y el MSI muere con *"Node.js Setup Wizard was interrupted. Your system has not been modified"*, porque escribe en `Program Files`. Comprobación: `[bool](whoami /groups | Select-String "S-1-5-32-544")` → `False`. **El script continúa y la instalación funciona igual**: cada release trae su propio runtime en `...\server\runtime\node.exe` (aquí `v22.22.2`) y el config apunta a ése, no al Node del sistema — el instalador lo reporta como `[+] Bundled Node.js runtime`. Todo el plugin cae bajo `%APPDATA%\Roaming\Autodesk\Revit\Addins\`, que es perfil de usuario. → **La Ruta A no necesita permisos de IT.** El Node del sistema solo hace falta para la Ruta C, que usa `npx`.
+
+16. **Otro add-in de Revit escuchando en un puerto vecino falsea el diagnóstico del 8080.** (Visto 2026-09-01, máquina `ahim`; costó tres rondas.) Antes de pulsar *Open Server*, el proceso Revit ya escuchaba en `127.0.0.1:55000` y `127.0.0.1:8088` — de otros add-ins de la misma cinta (Bluebeam, eTransmit, Cost-it, conversor a FormIt). Ver un puerto "casi correcto" hace concluir que el plugin arrancó en 8088 y manda a buscar un ajuste de puerto que no existe: el `index.js` **no contiene ningún literal de puerto** (una regex sobre el bundle devuelve vacío) y el plugin no trae archivo de settings con ese dato. → **Mide los puertos de Revit ANTES y DESPUÉS de pulsar Open Server**; el que aparece nuevo es el del MCP. Aquí el `8080` apareció como tercera fila al encenderlo:
+    ```powershell
+    $ids = (Get-Process Revit -EA SilentlyContinue).Id
+    Get-NetTCPConnection -State Listen -EA SilentlyContinue |
+      Where-Object { $ids -contains $_.OwningProcess } |
+      Select-Object LocalAddress, LocalPort | Format-Table -AutoSize
+    ```
+
+17. **Leer `main.log` sin marca de tiempo hace diagnosticar el arranque equivocado.** (Visto 2026-09-01.) Las líneas `[localMcpBridge] no stdio servers connected` se acumulan de arranques anteriores; un `Select-String` sin filtrar devuelve la de hace horas y parece que el arranque actual falló — con el config correcto y el puerto escuchando. → Anota la hora justo después del `Stop-Process` y compárala con los timestamps del log. Además de `Connected to revit-mcp (N tools)`, la señal inequívoca de éxito es una **lista enorme de nombres `revit-mcp__*`** en el log (`revit-mcp__get_project_info`, `revit-mcp__tag_all_walls`, `revit-mcp__export_to_excel`…).
+
 ## Diagnóstico (en orden)
 
 1. **¿Existen los archivos del server?** (sin pegar rutas largas)
@@ -143,6 +158,11 @@ En Claude Desktop, con un **modelo de prueba** abierto en Revit y el Switch ence
 
 Si devuelve datos reales del modelo → conectado.
 
+⚠️ **Que sea un proyecto `.rvt`, no una familia `.rfa`.** (Visto 2026-09-01.) Si Revit está en el
+Editor de familias, no hay niveles ni paredes ni información de proyecto: las respuestas salen
+vacías y parece un fallo del puente cuando el problema es el documento abierto. Los proyectos de
+muestra están en `C:\ProgramData\Autodesk\RVT 20*\Samples\*.rvt`.
+
 ## Avisos de seguridad (entregar siempre al usuario)
 
 - **Empezar con un modelo de prueba**, nunca un proyecto real al inicio.
@@ -165,6 +185,16 @@ Vistos en builds reales (guía @arch_ai_lab). Pásalos como instrucciones al pro
 - **2026-06-26** — máquina `jsalvador` (RDP, "ordenador compartido"): Plugin `v2.2.1` · Node LTS empaquetado · **Revit 2023.1 / 2024 / 2026** detectados e instalados a la vez ("3 version(s) installed") · PowerShell 5.1, Windows build 26100. **Instalación limpia, sin gotchas de DLL** (Revit cerrado durante el install). Único punto de fricción: el diálogo **Open Server** (gotcha #6). Verificado end-to-end con el modelo de muestra `RST_basic_sample_project` (devolvió niveles y conteo de paredes en Claude Desktop).
 
 - **2026-08-31** — máquina `CHIM` (asistencia remota desde macOS, no RDP): Plugin `v2.2.1` · Node `v24.20.0` LTS · **Revit 2023** · **Claude Desktop de Microsoft Store `1.15962.1.0`** · PowerShell 5.1, Windows build 26100. Instalador anclado con `-RevitVersion 2023`. La instalación en sí fue trivial; **las 3 horas se fueron en los gotchas #8, #9 y #10**, todos nuevos y todos ajenos al plugin: config en ruta virtualizada MSIX, la app pisando el bloque `revit-mcp`, y el chat de Cowork que no ve MCP locales. Verificado end-to-end: `Connected to revit-mcp (138 tools)` en `main.log` + `127.0.0.1:8080` con `OwningProcess` = proceso `Revit` + respuesta con datos del modelo en un chat normal.
+
+- **2026-09-01** — máquina `ahim` de Mallol (RDP con control total, asistido desde macOS): Plugin `v2.2.1` · Node **empaquetado** `v22.22.2` (el MSI del sistema falló, gotcha #15) · **Revit 2022 / 2023 / 2024 / 2025 instalados**, plugin en 2023/2024/2025 ("3 version(s) installed") · **Claude Desktop de Microsoft Store `1.15962.1.0`** · usuario **sin permisos de administrador** · PowerShell 5.1, Windows build 26100. Instalador corrido **sin `-RevitVersion`**: su `[ValidateSet('2023'..'2027')]` y `$REVIT_YEARS = 2023..2027` descartan Revit 2022 solos, así que no hay riesgo de meter el add-in en una versión no soportada. Los gotchas #8 y #9 **no aparecieron** por respetar el orden (0 procesos de Claude antes de instalar): el instalador resolvió la ruta MSIX y escribió `revit-mcp` a la primera. El tiempo se fue en los gotchas #16 y #17, ambos de diagnóstico, no de instalación. Verificado end-to-end en un chat normal, con el Switch encendido y `127.0.0.1:8080` en escucha por el proceso Revit.
+
+- **2026-09-01 (tarde)** — máquina `CHIM`, **Ruta C completa y funcionando en Cowork**: túnel con nombre
+  `revit-mcp-chim.mallolarquitectos.com` gestionado desde el panel de Cloudflare de Mallol, gateway
+  propio en `127.0.0.1:8000` con token en la ruta, watchdog cada 2 min, usuario **sin admin**.
+  Verificado end-to-end: `401` sin token desde fuera de la red (6 sondeos estables), `200` con token
+  con datos reales del modelo, respuesta **SSE** con `event: message`, y Cowork respondiendo en el
+  chat. Lo que costó la jornada: el gotcha #22 (SSE) al final, y antes el #24 (token transcrito mal
+  desde una captura) que disparó el #23 (veredicto de auth grabado al crear el conector).
 
 ### Verificadores rápidos (ejecutar en la Windows)
 
@@ -233,26 +263,145 @@ conector **personalizado por MCP remoto** sí — es la única vía, y funciona.
     → **Poner el token en la RUTA**: `https://…/mcp/<token>`. El gateway valida el último segmento.
     Se pega solo la URL, sin encabezados. Trátala como contraseña: quien vea la URL entra.
 
-14. **El conector de ORGANIZACIÓN fuerza "Inicio de sesión por navegador" y el toggle no se puede
-    apagar.** Queda pidiendo login contra un servidor que no tiene login, y nunca aparece disponible
-    para los miembros. → Para probar, **crear el conector personal** (Configuración personal →
-    Conectores → Agregar), donde sí se puede elegir *Ninguno*. El de organización solo sirve cuando
-    el servidor implemente OAuth de verdad.
+14. ~~**El conector de ORGANIZACIÓN fuerza "Inicio de sesión por navegador" y el toggle no se puede
+    apagar.**~~ **CORREGIDO — verificado el 2026-09-01.** El diálogo de creación ya ofrece
+    *Autenticación → **Ninguno*** también en conectores de organización, y con eso el conector
+    funciona. Dos matices que sí siguen vigentes:
+    - En **Team/Enterprise sólo un Owner o Primary Owner** puede añadir conectores personalizados
+      (**Organization settings → Connectors → Add → Custom → Web**); los miembros no tienen esa
+      opción, sólo *Customize → Connectors → Connect* sobre los ya publicados. El "créalo personal"
+      del consejo antiguo **no aplica** a cuentas de organización.
+    - Tras guardarlo, la pestaña *Configuración* puede seguir mostrando **"Inicio de sesión por
+      navegador" encendido y bloqueado**. Es cosmético: si la pestaña *Detalles* dice
+      *Autenticación: Ninguno*, el conector funciona. Verificado con Cowork respondiendo con datos
+      del modelo.
+
+### Las cuatro trampas del túnel con nombre (2026-09-01, máquina `CHIM`)
+
+Ninguna estaba documentada; entre las cuatro se fue la tarde. **El código HTTP dice en qué tramo
+está el fallo** — esta tabla es el diagnóstico más rápido que existe para la Ruta C:
+
+| Código | Significa | Dónde está el fallo |
+|---|---|---|
+| `530` + `error code: 1033` | Hostname publicado, **ningún conector activo** | `cloudflared` no corre, murió, o su token es de otro túnel |
+| `502` | Conector conectado, **origen inalcanzable** | del túnel al gateway: puerto, IP o gateway caído |
+| `401` con `{"error":"unauthorized"}` | **Llegó al gateway** y aplicó auth | correcto; ya solo falta el token |
+| `200` con datos del modelo | camino completo | verificado |
+
+18. **`localhost` en el Public Hostname resuelve a `::1` y da 502 eterno.** El gateway escucha solo
+    en `127.0.0.1` (a propósito, para no exponerse en la LAN). Con el servicio configurado como
+    `http://localhost:8000`, Windows resuelve IPv6 primero y el log de `cloudflared` lo dice literal:
+    `dial tcp [::1]:8000: connectex: ... denegó expresamente dicha conexión`. → En el panel, el
+    Service debe ser **`http://127.0.0.1:8000`**, nunca `localhost`. Arreglo de un campo, se propaga
+    en segundos sin reiniciar el conector. La alternativa —bindear el gateway a todas las
+    interfaces— amplía la superficie expuesta y no hace falta.
+
+19. **El token del túnel se pega con el comando entero delante.** El panel de Cloudflare ofrece
+    *"cloudflared tunnel run --token eyJ…"* para copiar de un tirón, y acaba dentro del archivo:
+    `longitud 215`, `empieza por: cloudflared`. Luego `tunnel run --token <ese contenido>` recibe un
+    token inválido y nunca se registra → `530`. → Verificador: **el token debe empezar por `eyJ` y no
+    contener espacios**. Vale la pena leerlo con `Read-Host -AsSecureString` (no se ve, no queda en
+    el historial ni en capturas) y extraer con `if ($raw -match '--token\s+(\S+)') { $Matches[1] }`.
+
+20. **El gateway lanzado con `Start-Process` desnudo muere sin dejar rastro.** Cayó tres veces en una
+    tarde y cada caída se manifestó como un 502 indistinguible de un problema de red. → Lanzarlo
+    **siempre** con `-RedirectStandardOutput` / `-RedirectStandardError` a archivos y
+    `-WindowStyle Hidden`: así no depende de una ventana que se puede cerrar y la causa queda escrita.
+    Señal de arranque sano en el log de stderr: `[gateway] initialize ok: {"name":"mcp-server-for-revit",…}`.
+
+21. **Un `$` al principio de línea se pierde al pegar en la consola remota.** `$dst = "..."` llega como
+    `dst = "..."` → *"El término 'dst' no se reconoce"* y, peor, la variable queda sin definir y el
+    comando siguiente usa una URL sin token. Es primo del gotcha #5. → Empezar los bloques pegados con
+    una línea de comentario (`# ---`), que absorbe el carácter perdido.
+
+22. **Cowork pide `text/event-stream` y un gateway que responde JSON plano cuelga en `tools/call`.**
+    Es el fallo final de la Ruta C, y engaña porque **`initialize` y `tools/list` sí funcionan** —el
+    chat dice *"herramientas cargadas"*— y sólo mueren las llamadas a herramientas, con *timeout* en
+    los tres intentos. El diagnóstico apunta a Revit (diálogo modal, documento ocupado) cuando Revit
+    está perfecto: el mismo `tools/call` por `curl` devuelve datos en 0,67 s. → El gateway debe
+    responder **SSE cuando el `Accept` lo pida**, con el JSON-RPC dentro de un único evento:
+    ```js
+    const sse = /text\/event-stream/i.test(req.headers['accept'] || '');
+    res.writeHead(200, sse
+      ? { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' }
+      : { 'Content-Type': 'application/json' });
+    res.end(sse ? ('event: message\ndata: ' + JSON.stringify(out) + '\n\n') : JSON.stringify(out));
+    ```
+    Ya viene en [assets/gateway.js](./assets/gateway.js). Verificador antes de tocar Cowork:
+    `curl -H "Accept: text/event-stream"` debe devolver `event: message` + `data: {...}`.
+
+23. **El conector graba el veredicto de autenticación en el momento de crearlo.** Si al añadirlo el
+    servidor está caído (`530`) o devuelve `401` —por ejemplo porque el token de la URL está mal—,
+    queda marcado *"Siempre requerido — Detectado"* y el interruptor de inicio de sesión **no se
+    deja apagar**. Editarlo no lo arregla. → **Levanta el servidor y comprueba que responde `200`
+    ANTES de crear el conector**; si ya quedó mal, **bórralo y créalo de nuevo** (fila del conector
+    → *Quitar*, o el menú de tres puntos).
+
+24. **Nunca transcribir un token desde una captura de pantalla.** Pasó el 2026-09-01: se leyó
+    `wCwnls…` donde decía `cWcnls…` —dos letras invertidas en 43 caracteres— y el conector quedó
+    apuntando a una URL que devolvía `401`, lo que disparó el gotcha #23 y costó varias rondas de
+    diagnóstico equivocado. → La URL se copia **del archivo**, nunca de una imagen o del chat:
+    `Set-Clipboard -Value (Get-Content "$dst\url-conector.txt" -Raw).Trim()`. Para confirmar que se
+    pegó bien, comparar sólo los **últimos 4-6 caracteres**, que no revelan el secreto.
+
+25. **Sin admin, la persistencia va con `schtasks`, no con `Register-ScheduledTask`.** El cmdlet
+    falla con `-RepetitionDuration ([TimeSpan]::MaxValue)`: *"El archivo XML de tarea contiene un
+    valor con formato incorrecto o que está fuera de intervalo"*. → Usar la herramienta clásica, que
+    no necesita privilegios para tareas del propio usuario:
+    ```powershell
+    schtasks /Create /TN "revit-bridge-watchdog" /TR "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%USERPROFILE%\revit-gateway\watchdog.ps1\"" /SC MINUTE /MO 2 /F
+    ```
+
+26. **El gateway y el túnel se mueren solos: hace falta un vigilante, no reinicios manuales.** En una
+    tarde cayeron cuatro veces, y cada caída se manifestó como un error distinto (`530` si murió el
+    túnel, `502` si murió el gateway), lo que hace perseguir causas inexistentes. → Instalar
+    [assets/watchdog.ps1](./assets/watchdog.ps1) con la tarea del punto #25: comprueba cada 2 minutos
+    y relanza lo que falte, dejando traza en `watchdog.log`. Es lo que convierte el montaje en algo
+    utilizable a diario.
+
+**Rotar el token si aparece en una captura.** Pasó el 2026-09-01: el token del túnel quedó legible en
+pantalla al guardarlo. Contiene accountTag, tunnelID y secreto: con él se levanta un conector que
+suplanta ese hostname desde otra máquina. Rotación: Zero Trust → el túnel → **Refresh token**;
+el anterior queda inservible al instante.
 
 ### Comandos (en la Windows con Revit)
 
 ```powershell
-# Node del sistema — el empaquetado del plugin NO trae npx
+# Node del sistema — el empaquetado del plugin NO trae npx (winget requiere admin)
 winget install OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
-# cerrar y reabrir PowerShell
 
-# túnel de salida
-winget install --id Cloudflare.cloudflared -e
-cloudflared tunnel --url http://localhost:8000     # imprime la URL pública
+# cloudflared: portable, funciona SIN admin
+$dir = "$env:USERPROFILE\tools"; New-Item -ItemType Directory -Force -Path $dir | Out-Null
+irm https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile "$dir\cloudflared.exe"
+
+# quick tunnel (URL desechable, muere al reiniciar)
+& "$dir\cloudflared.exe" tunnel --url http://localhost:8000
+# túnel con nombre gestionado desde el panel: solo hace falta el token, sin `tunnel login`
+& "$dir\cloudflared.exe" tunnel run --token <TOKEN>
 ```
 
-Lo demás (gateway con token, stateless, sin `WWW-Authenticate`) es más rápido delegárselo a
-**Claude Code en esa máquina** con un prompt que incluya el criterio de éxito. Así se hizo.
+**Túnel con nombre en la infraestructura del cliente (camino recomendado).** Evita el `tunnel login`
+interactivo y deja la propiedad donde debe estar: quien administre Cloudflare crea el túnel en
+Zero Trust → Networks → Tunnels, publica el *Public Hostname* apuntando a **`HTTP://localhost:8000`**
+—al gateway, nunca al 8080 del add-in, que no tiene autenticación— y entrega **solo el token**.
+Requisito: la zona del cliente ya delegada a Cloudflare (`dig +short NS <dominio>` debe devolver
+`*.ns.cloudflare.com`).
+
+El gateway ya no se improvisa: está versionado en **[assets/gateway.js](./assets/gateway.js)**
+(SHA-256 `786dfd66…efce27b6`). Node puro, sin dependencias, y **lee el `command`/`args` del
+`claude_desktop_config.json`** —incluida la ruta MSIX— así que no hay rutas que codificar a mano.
+Variables: `MCP_TOKEN` (obligatoria), `PORT` (8000), `MCP_COMMAND`/`MCP_ARGS` para forzar el server.
+
+**Cómo llevarlo a la Windows sin red compartida** (2026-09-01): pegar 200 líneas de JS por RDP se
+corrompe. En su lugar, `base64` del archivo troceado a **2800 caracteres por línea** —por debajo del
+límite de entrada de la consola—, concatenar las partes, `[IO.File]::WriteAllBytes` y **verificar con
+`Get-FileHash -Algorithm SHA256` contra el hash de origen**. Si el hash no coincide, un trozo se pegó
+mal: repetirlo, nunca seguir adelante.
+
+**Sin admin** (caso `CHIM`): `cloudflared` no se instala con winget sino como binario portable
+(`irm https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe`)
+y la persistencia va por acceso directo en `[Environment]::GetFolderPath('Startup')`, no por servicio
+de Windows.
 
 ### Verificador — correr desde FUERA de la red, no desde la máquina
 
@@ -273,13 +422,62 @@ curl -s -X POST "$B/mcp/$T" -H "$H" -H "$A" \
 
 El último debe devolver el nombre real del proyecto. Si eso responde, Cowork responderá.
 
-### Limitación pendiente
+### ~~Limitación pendiente~~ → RESUELTA con túnel con nombre (2026-09-01)
 
-`trycloudflare` es un **quick tunnel**: la URL muere al cerrar cloudflared o reiniciar el equipo, y
-la siguiente es distinta — hay que reeditar el conector. Para dejarlo estable hace falta un **túnel
-con nombre** y dominio propio. El token sobrevive al reinicio; la URL no.
+`trycloudflare` es un **quick tunnel**: la URL muere al cerrar cloudflared o reiniciar el equipo.
+Fue exactamente lo que mató el conector de agosto — semanas apuntando a un hostname que ya no
+resolvía. **La solución es un túnel con nombre en la infraestructura del cliente**, y el camino
+más limpio es el **gestionado desde el panel**: quien administre Cloudflare crea el túnel en
+Zero Trust, publica el hostname y entrega **sólo el token**; en la máquina basta
+`cloudflared tunnel run --token <TOKEN>`, sin `tunnel login` interactivo y sin admin.
+
+Requisito: la zona del cliente delegada a Cloudflare. Compruébalo antes de prometer nada:
+`dig +short NS <dominio>` debe devolver `*.ns.cloudflare.com`.
+
+---
+
+## Desplegar en más equipos
+
+Todo lo aprendido está empaquetado en **[assets/deploy-revit-bridge.ps1](./assets/deploy-revit-bridge.ps1)**,
+que en un equipo nuevo hace en un paso: comprobar requisitos, instalar `gateway.js` y `watchdog.ps1`,
+generar el token, descargar `cloudflared` portable, pedir el token del túnel con entrada oculta,
+registrar la tarea del watchdog, arrancar todo y **verificar los cinco códigos** (401/200 local,
+401/200 público y SSE). No imprime la URL: la deja en archivo y portapapeles.
+
+```powershell
+.\deploy-revit-bridge.ps1 -PublicHostname revit-mcp-pc07.mallolarquitectos.com
+```
+
+### Lo que hay que decidir antes de escalar
+
+- **Un hostname y un token por equipo.** El conector apunta a UNA máquina: N equipos son N túneles,
+  N tokens y N conectores. Nómbralos por equipo (`revit-mcp-<pc>`) o nadie sabrá a cuál pregunta.
+- **¿Estación central o puesto por arquitecto?** Un solo equipo compartido es más barato de operar
+  (un túnel, un modelo abierto) pero todos ven y modifican el mismo documento. Un puesto por
+  arquitecto multiplica el montaje y el mantenimiento.
+- **El eslabón manual no desaparece.** Alguien tiene que abrir Revit con el modelo y pulsar
+  *Open Server* en cada sesión. Si el equipo se reinicia de noche, el puente queda muerto aunque el
+  túnel reviva: el watchdog cuida gateway y túnel, **no** el add-in.
+- **Sólo un Owner puede publicar el conector** en Team/Enterprise (gotcha #14). Consigue esa
+  disponibilidad antes de empezar, o el trabajo queda hecho y sin poder estrenarse.
+- **Si lo que hace falta es sólo consultar datos** (métricas, cantidades, QA), evalúa antes ir por
+  **APS/ACC** contra el modelo publicado: no necesita PC encendido, ni túnel, ni botón que pulsar, y
+  da permisos por usuario en vez de un token compartido. El add-in gana cuando hay que **modificar
+  el modelo abierto** en vivo. Ver el skill `desarrollo-apps-autodesk`.
+
+### Orden de despliegue por equipo (~40 min)
+
+1. **Ruta A** con `install.ps1` — sin admin, plugin en todas las versiones soportadas (~20 min).
+2. Revit abierto, un `.rvt` de prueba, **Open Server** pulsado; comprobar `8080` en escucha.
+3. Pedir a quien administre Cloudflare el túnel y el hostname, con Service **`http://127.0.0.1:8000`**.
+4. `deploy-revit-bridge.ps1 -PublicHostname <host>` (~10 min, incluye su propia verificación).
+5. Un Owner publica el conector: **Organization settings → Connectors → Add → Custom → Web**,
+   autenticación **Ninguno**.
+6. Probar en Cowork: *"¿qué archivo de Revit está abierto?"*.
 
 ### Coste real
 
-Instalar el plugin: 20 min. Llegar a Cowork: ~3 h, casi todas en los gotchas #8 a #14. Con este
-runbook debería ser menos de una hora.
+- Ruta A sola: **20-30 min** con este runbook.
+- Ruta C la primera vez: **~3 h en agosto** (gotchas #8-#14) y **otra jornada el 2026-09-01**
+  (gotchas #15-#26, sobre todo el SSE del #22, que se disfraza de "Revit no responde").
+- Ruta C con el instalador y estos gotchas: **menos de una hora**, y la mayor parte es esperar a IT.
