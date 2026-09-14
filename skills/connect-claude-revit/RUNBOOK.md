@@ -53,6 +53,27 @@ Al final debe decir `Installation complete!`.
 
 ---
 
+## 1b. Dejar la configuración de Claude sin BOM (siempre)
+
+> ⚠️ **Visto el 2026-09-14.** El instalador escribe `claude_desktop_config.json` con Windows PowerShell 5.1, que añade una marca invisible (BOM) al inicio del archivo. Claude Desktop puede negarse a leerlo: *«No se pudieron cargar los ajustes de la aplicación… Unexpected token»*. **No pulses Aceptar**: Claude reescribe el archivo y borra la entrada `revit-mcp`.
+
+Con Claude cerrado, quita la marca. Es seguro repetirlo:
+
+```powershell
+Get-Process Claude -EA SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 6
+$pkg = (Get-ChildItem "$env:LOCALAPPDATA\Packages" -Filter "Claude_*" -EA SilentlyContinue | Select-Object -First 1).FullName
+$dir = if (Test-Path "$env:APPDATA\Claude") { "$env:APPDATA\Claude" } else { "$pkg\LocalCache\Roaming\Claude" }
+$cfg = "$dir\claude_desktop_config.json"
+$txt = [IO.File]::ReadAllText($cfg).TrimStart([char]0xFEFF)
+[IO.File]::WriteAllText($cfg, $txt, (New-Object System.Text.UTF8Encoding $false))
+"primeros bytes: " + (([IO.File]::ReadAllBytes($cfg))[0..2] -join ",")
+"revit-mcp en la config: " + [bool](($txt | ConvertFrom-Json).mcpServers.'revit-mcp')
+```
+
+Debe salir `primeros bytes: 123,…` (una llave; `239,187,191` sería la BOM) y `revit-mcp en la config: True`. Si sale `False`, Claude ya borró la entrada: repite el paso 1 con Claude cerrado y luego este. La versión que además la recupera sola desde el respaldo es el bloque 4b de `assets/ruta-a-terminal.ps1`.
+
+---
+
 ## 2. (Solo si Revit estaba abierto) Desbloquear los DLLs
 
 Cierra Revit por completo y corre (ajusta `2023` a tu versión):
@@ -107,6 +128,7 @@ Si responde con datos reales del modelo → **listo, está conectado.** 🎯
 
 | Síntoma | Causa | Solución |
 |---|---|---|
+| Aviso *«No se pudieron cargar los ajustes de la aplicación… Unexpected token»* al abrir Claude | La config quedó con BOM (la escribe el instalador) | **No pulses Aceptar.** Paso 1b y luego paso 4 |
 | `irm ... : Access to the path '...install.ps1' is denied` | Estás en `System32`, sin permiso de escritura | `cd $env:USERPROFILE\Downloads` y repite |
 | El botón **Revit MCP Switch** está gris | No hay un modelo abierto en Revit | Abre/crea un proyecto |
 | Sigue gris **con** modelo abierto | DLLs bloqueados / add-in no cargó | Cierra Revit → `Unblock-File` (paso 2) → reabre y *Always Load* |

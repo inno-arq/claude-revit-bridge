@@ -42,8 +42,9 @@ Todo en PowerShell **dentro de la Windows**:
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
    En el wizard: `1` para instalar Node.js LTS (sin admin y sin Node en el sistema, mejor pasar `-SkipNodeCheck`, gotcha #27). El instalador detecta las versiones de Revit, descarga el release y configura Claude Desktop.
-3. **Encender el puente en Revit**: abre Revit **con un modelo abierto** → pestaña **Add-Ins** → panel **Revit MCP Plugin** → **Revit MCP Switch**. Esto abre el diálogo **`mcp-servers-for-revit · revitMCP`** → pulsa **Open Server** (NO "Cerrar") para arrancar el server en `localhost:8080`. Ver gotcha #6.
-4. **Reiniciar Claude Desktop DE VERDAD** (ver gotcha #4) y verificar en **Settings → Developer** que aparece `revit-mcp`.
+3. **Quitar la BOM del config antes de abrir Claude** (gotcha #29): el instalador lo escribe con `Set-Content -Encoding UTF8` de PowerShell 5.1, y Claude puede rechazarlo y borrar `revit-mcp` si alguien pulsa *Aceptar* en el aviso. Con Claude en 0 procesos, correr el bloque 4b de [assets/ruta-a-terminal.ps1](./assets/ruta-a-terminal.ps1) o el paso 1b del [RUNBOOK.md](./RUNBOOK.md).
+4. **Encender el puente en Revit**: abre Revit **con un modelo abierto** → pestaña **Add-Ins** → panel **Revit MCP Plugin** → **Revit MCP Switch**. Esto abre el diálogo **`mcp-servers-for-revit · revitMCP`** → pulsa **Open Server** (NO "Cerrar") para arrancar el server en `localhost:8080`. Ver gotcha #6.
+5. **Reiniciar Claude Desktop DE VERDAD** (ver gotcha #4) y verificar en **Settings → Developer** que aparece `revit-mcp`.
 
 ### Instalación asistida con Claude Code (cualquier ruta)
 
@@ -52,7 +53,8 @@ Si la Windows tiene **Claude Code**, la parte automatizable (descargar/clonar, e
 ### Flujo 100 % por terminal, asistido desde otra máquina (2026-09-09)
 
 Probado en `M4TEC-EVEZGA`: quien instala está en otra máquina (aquí una Mac) y la persona en la
-Windows sólo pega bloques de PowerShell y devuelve la salida. Los siete bloques están en
+Windows sólo pega bloques de PowerShell y devuelve la salida. Los bloques (siete, más el 4b del
+gotcha #29) están en
 [assets/ruta-a-terminal.ps1](./assets/ruta-a-terminal.ps1); cada uno empieza con `# ---` (gotcha
 #21) y termina con una línea `--- fin ---` para saber que llegó entero. Lo que lo hace fluido no son
 los comandos sino las **compuertas entre bloques**, que se leen en la salida antes de dar el siguiente:
@@ -62,7 +64,8 @@ los comandos sino las **compuertas entre bloques**, que se leen en la salida ant
 | 1 reconocimiento | host, admin, procesos, Revit instalados, plugin previo, variante de Claude, config, Node, puertos de Revit | decide si hay que matar Revit/Claude y si el config es MSIX |
 | 2 preparar | mata Claude, respalda el config (`*.pre-revit-mcp.bak`), descarga `install.ps1`, imprime su SHA-256 | `claude despues` = 0 **y** hash igual al del script revisado en la máquina del que asiste |
 | 3 instalar | `install.ps1 -SkipNodeCheck` (gotcha #27) | `Installation complete! (N version(s) installed)` |
-| 4 verificar | add-in y plugin por año, `command`/`args[0]` del config existen, versión del Node empaquetado | todo `True` y Claude sigue en 0 |
+| 4 verificar | add-in y plugin por año, `command`/`args[0]` del config existen, versión del Node empaquetado | todo `True` y Claude sigue en 0 — **no prueba que Claude pueda leer el config** (gotcha #29) |
+| 4b sin BOM | mata Claude, reescribe el config sin BOM (copia `*.con-bom.bak`), rearma `revit-mcp` desde `*.pre-revit-mcp.bak` si falta, lee con `JSON.parse` del Node empaquetado | `escrito sin BOM`, `config despues: bytes 123,…  node: OK` y `revit-mcp en config despues: True` |
 | 5 abrir Revit | lanza `Revit.exe` con una muestra de `C:\ProgramData\Autodesk\RVT 20*\Samples` | **único paso con mouse**: *Always Load* → *Revit MCP Switch* → **Open Server** |
 | 6 arrancar Claude | puertos de Revit después, `8080 escucha por: Revit`, hora de arranque, `Get-StartApps` + `shell:AppsFolder\<AppID>`, 30 s, log filtrado | `Connected to revit-mcp (N tools)` con hora posterior a la de arranque |
 | 7 config | `revit-mcp sigue en config: True` tras el arranque | la app no lo pisó al arrancar |
@@ -161,6 +164,18 @@ Cadena: `Claude Desktop → main.py (MCP, FastMCP/uv) → pyRevit Routes (localh
 
 28. **`[remote-tools-device] connecting DO bridge with: revit-mcp__…` — Claude Desktop anuncia las herramientas locales a un puente remoto.** (Visto 2026-09-09 en `main.log` de Claude Desktop Store `1.15962.1.0`; el config de esa máquina trae `remoteToolsDeviceName: "m4tec-evezga"`.) Es la primera vez que aparece y **NO está verificado** qué alcanza. Prueba pendiente, cuesta un minuto: en un chat de Cowork de esa cuenta, *"¿qué archivo de Revit está abierto?"*. Si responde con el modelo, el gotcha #10 queda parcialmente obsoleto y la Ruta C sobra para equipos con esta versión. Hasta entonces, la Ruta C sigue siendo el camino documentado.
 
+29. **El instalador deja `claude_desktop_config.json` con BOM; Claude Desktop puede rechazarlo y, al pulsar *Aceptar*, lo reescribe SIN `revit-mcp`.** (Visto 2026-09-14, máquina `M4MEP-LZUANICH`, Claude Desktop Store `1.15962.1.0`, `install.ps1` `cc00cd86…`.) La línea 718 del instalador es `$config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8`, y en Windows PowerShell 5.1 ese `UTF8` escribe BOM (`EF BB BF`). Al abrir Claude salió *«No se pudieron cargar los ajustes de la aplicación. Hubo un error al leer o analizar claude_desktop_config.json: Unexpected token '', "{ "p"... is not valid JSON»*. El token invisible es la BOM, y el fragmento de 10 caracteres (BOM, `{`, CRLF, 4 espacios, `"p`) es la huella de `ConvertTo-Json` de PS 5.1: `JSON.parse` de Node da el mismo mensaje con un archivo así. Tras *Aceptar*, el archivo apareció reescrito por la app (`123,10,32`, sangría de 2) **y sin la entrada `revit-mcp`**. En `M4TEC-EVEZGA` (2026-09-09), con el mismo instalador y la misma versión de Claude, no pasó; **no se sabe por qué**, así que hay que tratarlo como posible siempre.
+    - **Por qué el bloque 4 no lo vio:** `Get-Content -Raw | ConvertFrom-Json` y `[IO.File]::ReadAllText` quitan la BOM en silencio, así que todo salió `True` con un archivo que Claude no podía leer. El verificador tiene que leer como Claude: con el `node.exe` empaquetado y `JSON.parse`.
+    - → **Arreglo, entre instalar y abrir Claude**: el bloque 4b de [assets/ruta-a-terminal.ps1](./assets/ruta-a-terminal.ps1), que además rearma la entrada desde `*.pre-revit-mcp.bak` si ya se perdió. Lo esencial, con 0 procesos de Claude (`$cfg` como en el gotcha #8):
+      ```powershell
+      $node = "$env:APPDATA\Autodesk\Revit\Addins\2026\revit_mcp_plugin\Commands\RevitMCPCommandSet\server\runtime\node.exe"   # año más alto (#27)
+      $txt = [IO.File]::ReadAllText($cfg).TrimStart([char]0xFEFF)
+      [IO.File]::WriteAllText($cfg, $txt, (New-Object System.Text.UTF8Encoding $false))
+      (([IO.File]::ReadAllBytes($cfg))[0..2] -join ",")   # 123,... sin BOM · 239,187,191 con BOM
+      & $node -e "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log('OK')}catch(e){console.log('FALLA: '+e.message)}" $cfg
+      ```
+    - Si el aviso ya apareció: **no pulsar *Aceptar***; matar Claude y correr el bloque 4b. En `M4MEP-LZUANICH` tomó la rama de recuperación y después dio `Connected to revit-mcp (138 tools)`, con la entrada intacta tras arrancar.
+
 ## Diagnóstico (en orden)
 
 1. **¿Existen los archivos del server?** (sin pegar rutas largas)
@@ -238,6 +253,20 @@ Vistos en builds reales (guía @arch_ai_lab). Pásalos como instrucciones al pro
   medido, `revit-mcp sigue en config: True` tras arrancar, y respuesta con datos del modelo de
   muestra en un chat normal. Novedad sin verificar: gotcha #28.
 
+- **2026-09-14** — máquina `M4MEP-LZUANICH` de Mallol (usuario `lzuanich`, **sin admin**, asistido desde
+  macOS por Chrome Remote Desktop con capturas de pantalla): Plugin `v2.2.1` · Node **empaquetado**
+  `v22.22.2` · **Revit 2022 / 2023 / 2024 / 2025 / 2026** instalados, plugin en 2023–2026
+  ("4 version(s) installed"), config apuntando a 2026 · **Claude Desktop de Microsoft Store `1.15962.1.0`** ·
+  PowerShell `5.1.26100.9444`, Windows build 26200 · mismo `install.ps1` (`cc00cd86…`). Bloques 1–4 sin
+  incidencias; al abrir Revit apareció el **gotcha #29** (config con BOM: Claude lo rechazó y, tras
+  *Aceptar*, lo reescribió sin `revit-mcp`). Resuelto con el bloque 4b por la rama de recuperación;
+  después `Connected to revit-mcp (138 tools)` a las 10:33:20 y la entrada seguía en el config tras
+  arrancar. **La pregunta final en el chat no quedó confirmada en la sesión.** Dos detalles de este modo
+  de asistencia: `pbcopy` en la Mac llega al portapapeles de la Windows por Chrome Remote Desktop, y
+  conviene comparar el hash dentro de PowerShell (`-eq` → `True`/`False`) en vez de leer 64 caracteres
+  de una captura (gotcha #24). Guía para IT derivada de esta instalación (8 pasos generalizados,
+  identidad Mallol, borrador): https://claude.ai/code/artifact/023169c0-9fb8-497b-8d84-764cb6c3cfb6
+
 ### Verificadores rápidos (ejecutar en la Windows)
 
 Los dos que más aíslan, porque no dependen uno del otro:
@@ -254,7 +283,17 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 8080 -State Listen -EA Silently
 # esperado: 127.0.0.1:8080 con ProcessName = Revit
 ```
 
-`no stdio servers connected` en el log **sin ninguna mención de `revit`** = la config no llegó (gotcha #8 o #9), no un fallo del server.
+`no stdio servers connected` en el log **sin ninguna mención de `revit`** = la config no llegó (gotcha #8, #9 o #29), no un fallo del server.
+
+Y un tercero, porque los dos de arriba no ven la BOM (gotcha #29): ¿Claude puede **leer** su config?
+
+```powershell
+$cfg  = "$pkg\LocalCache\Roaming\Claude\claude_desktop_config.json"
+$node = "$env:APPDATA\Autodesk\Revit\Addins\2026\revit_mcp_plugin\Commands\RevitMCPCommandSet\server\runtime\node.exe"   # año más alto (#27)
+(([IO.File]::ReadAllBytes($cfg))[0..2] -join ",")   # 239,187,191 = BOM
+& $node -e "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log('OK')}catch(e){console.log('FALLA: '+e.message)}" $cfg
+# esperado: 123,... y OK
+```
 
 ---
 

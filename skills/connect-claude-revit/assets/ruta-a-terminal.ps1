@@ -9,7 +9,9 @@
 #   1 -> 2 : decidir si hay que matar Revit/Claude y si el config es MSIX
 #   2 -> 3 : "claude despues" = 0  Y  hash igual al del install.ps1 revisado en la máquina del que asiste
 #   3 -> 4 : "Installation complete! (N version(s) installed)"
-#   4 -> 5 : todo True, Claude sigue en 0
+#   4 -> 4b: todo True, Claude sigue en 0 (PowerShell no ve la BOM: eso lo prueba el 4b, gotcha #29)
+#   4b -> 5: "escrito sin BOM", "config despues: bytes 123,...   node: OK", "revit-mcp en config despues: True"
+#            (bloque 4b añadido el 2026-09-14 en M4MEP-LZUANICH)
 #   5 -> 6 : Revit con modelo abierto, Revit MCP Switch -> Open Server pulsado (único paso con mouse)
 #   6 -> 7 : "8080 escucha por: Revit" y "Connected to revit-mcp (N tools)" con hora POSTERIOR al arranque
 #   7 -> fin: "revit-mcp sigue en config: True"; después la pregunta en un chat normal de Claude Desktop
@@ -69,6 +71,31 @@ $e = (Get-Content $cfg -Raw | ConvertFrom-Json).mcpServers.'revit-mcp'
 "node empaquetado: " + (& "$($e.command)" -v)
 "--- fin bloque 4 ---"
 # Esperado: command/args0 bajo la carpeta del AÑO MÁS ALTO instalado (el instalador ordena descendente).
+
+# --- bloque 4b: quitar el BOM del config de Claude y verificar con JSON.parse (gotcha #29) ---
+"claude antes: " + (Get-Process Claude -EA SilentlyContinue | Measure-Object).Count + "   exe: " + (Get-Process Claude -EA SilentlyContinue | Select-Object -First 1 -ExpandProperty Path)
+Get-Process Claude -EA SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 6
+"claude despues (debe ser 0): " + (Get-Process Claude -EA SilentlyContinue | Measure-Object).Count
+$pkg = (Get-ChildItem "$env:LOCALAPPDATA\Packages" -Filter "Claude_*" | Select-Object -First 1).FullName
+$cfg = "$pkg\LocalCache\Roaming\Claude\claude_desktop_config.json"
+$bak = "$cfg.pre-revit-mcp.bak"
+$srv = "$env:APPDATA\Autodesk\Revit\Addins\2026\revit_mcp_plugin\Commands\RevitMCPCommandSet\server"
+$node = "$srv\runtime\node.exe"
+$js = "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log('OK')}catch(e){console.log('FALLA: '+e.message)}"
+"config antes: bytes " + (([IO.File]::ReadAllBytes($cfg))[0..2] -join ",") + "   node: " + (& $node -e $js $cfg)
+"backup:       bytes " + (([IO.File]::ReadAllBytes($bak))[0..2] -join ",") + "   node: " + (& $node -e $js $bak)
+$txt = [IO.File]::ReadAllText($cfg).TrimStart([char]0xFEFF)
+$tiene = [bool](($txt | ConvertFrom-Json).mcpServers.'revit-mcp')
+"revit-mcp en config antes: $tiene"
+if (-not $tiene) { $o = [IO.File]::ReadAllText($bak).TrimStart([char]0xFEFF) | ConvertFrom-Json; if (-not $o.mcpServers) { $o | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([PSCustomObject]@{}) }; $o.mcpServers | Add-Member -NotePropertyName 'revit-mcp' -NotePropertyValue ([PSCustomObject]@{ command = $node; args = @("$srv\build\index.js") }) -Force; $txt = $o | ConvertTo-Json -Depth 10; "reconstruido desde el backup + revit-mcp" }
+if ((Get-Process Claude -EA SilentlyContinue | Measure-Object).Count -eq 0) { Copy-Item $cfg "$cfg.con-bom.bak" -Force; [IO.File]::WriteAllText($cfg, $txt, (New-Object System.Text.UTF8Encoding $false)); "escrito sin BOM" } else { "NO escrito: Claude sigue abierto" }
+"config despues: bytes " + (([IO.File]::ReadAllBytes($cfg))[0..2] -join ",") + "   node: " + (& $node -e $js $cfg)
+"revit-mcp en config despues: " + [bool](([IO.File]::ReadAllText($cfg) | ConvertFrom-Json).mcpServers.'revit-mcp')
+"--- fin bloque 4b ---"
+# Esperado: "escrito sin BOM", "config despues: bytes 123,...   node: OK" y "revit-mcp en config despues: True".
+# "config antes: bytes 239,187,191" confirma la BOM; "123" = sin BOM. Ajusta el año de $srv al Revit mas alto (gotcha #27).
+# Corrido en M4MEP-LZUANICH el 2026-09-14 por la rama de recuperacion: Claude ya habia borrado la entrada.
 
 # --- bloque 5: abrir Revit con una muestra (ajusta el año del Revit.exe) ---
 $f = Get-ChildItem "C:\ProgramData\Autodesk\RVT 20*\Samples" -Filter *.rvt -EA SilentlyContinue | Where-Object Name -notlike "*family*" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
