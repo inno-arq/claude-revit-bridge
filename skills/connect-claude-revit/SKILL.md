@@ -41,13 +41,38 @@ Todo en PowerShell **dentro de la Windows**:
    notepad install.ps1
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
-   En el wizard: `1` para instalar Node.js LTS. El instalador detecta las versiones de Revit, descarga el release y configura Claude Desktop.
+   En el wizard: `1` para instalar Node.js LTS (sin admin y sin Node en el sistema, mejor pasar `-SkipNodeCheck`, gotcha #27). El instalador detecta las versiones de Revit, descarga el release y configura Claude Desktop.
 3. **Encender el puente en Revit**: abre Revit **con un modelo abierto** → pestaña **Add-Ins** → panel **Revit MCP Plugin** → **Revit MCP Switch**. Esto abre el diálogo **`mcp-servers-for-revit · revitMCP`** → pulsa **Open Server** (NO "Cerrar") para arrancar el server en `localhost:8080`. Ver gotcha #6.
 4. **Reiniciar Claude Desktop DE VERDAD** (ver gotcha #4) y verificar en **Settings → Developer** que aparece `revit-mcp`.
 
 ### Instalación asistida con Claude Code (cualquier ruta)
 
 Si la Windows tiene **Claude Code**, la parte automatizable (descargar/clonar, editar `claude_desktop_config.json`) se le puede delegar pegando un prompt tipo: *"Instala el MCP server de Revit desde <repo>. Haz el clone/descarga y edita mi claude_desktop_config.json. Dime qué me queda por hacer a mano dentro de Revit y NO intentes automatizar la UI de Revit ni el reinicio de Claude Desktop."* Los pasos de UI (Switch/Open Server en Ruta A; activar Routes en Ruta B; reinicio real de Claude Desktop) siempre son manuales.
+
+### Flujo 100 % por terminal, asistido desde otra máquina (2026-09-09)
+
+Probado en `M4TEC-EVEZGA`: quien instala está en otra máquina (aquí una Mac) y la persona en la
+Windows sólo pega bloques de PowerShell y devuelve la salida. Los siete bloques están en
+[assets/ruta-a-terminal.ps1](./assets/ruta-a-terminal.ps1); cada uno empieza con `# ---` (gotcha
+#21) y termina con una línea `--- fin ---` para saber que llegó entero. Lo que lo hace fluido no son
+los comandos sino las **compuertas entre bloques**, que se leen en la salida antes de dar el siguiente:
+
+| Bloque | Hace | Compuerta antes del siguiente |
+|---|---|---|
+| 1 reconocimiento | host, admin, procesos, Revit instalados, plugin previo, variante de Claude, config, Node, puertos de Revit | decide si hay que matar Revit/Claude y si el config es MSIX |
+| 2 preparar | mata Claude, respalda el config (`*.pre-revit-mcp.bak`), descarga `install.ps1`, imprime su SHA-256 | `claude despues` = 0 **y** hash igual al del script revisado en la máquina del que asiste |
+| 3 instalar | `install.ps1 -SkipNodeCheck` (gotcha #27) | `Installation complete! (N version(s) installed)` |
+| 4 verificar | add-in y plugin por año, `command`/`args[0]` del config existen, versión del Node empaquetado | todo `True` y Claude sigue en 0 |
+| 5 abrir Revit | lanza `Revit.exe` con una muestra de `C:\ProgramData\Autodesk\RVT 20*\Samples` | **único paso con mouse**: *Always Load* → *Revit MCP Switch* → **Open Server** |
+| 6 arrancar Claude | puertos de Revit después, `8080 escucha por: Revit`, hora de arranque, `Get-StartApps` + `shell:AppsFolder\<AppID>`, 30 s, log filtrado | `Connected to revit-mcp (N tools)` con hora posterior a la de arranque |
+| 7 config | `revit-mcp sigue en config: True` tras el arranque | la app no lo pisó al arrancar |
+
+Sólo la pregunta final en el chat de Claude Desktop queda fuera de la terminal, y es la que cuenta
+como verificación. Dos detalles que ahorran una ronda cada uno: el hash del instalador se compara
+**contra una copia descargada y leída en la máquina del que asiste**, no se abre `notepad` en la
+Windows; y la app de Store se arranca con `Start-Process explorer.exe "shell:AppsFolder\$app"`,
+donde `$app` sale de `(Get-StartApps | Where-Object { $_.AppID -like "Claude_*" }).AppID`
+(aquí `Claude_pzs8sxrjxfjjc!Claude`).
 
 ## Ruta B — pyRevit Routes + MCP server Python
 
@@ -132,6 +157,10 @@ Cadena: `Claude Desktop → main.py (MCP, FastMCP/uv) → pyRevit Routes (localh
 
 17. **Leer `main.log` sin marca de tiempo hace diagnosticar el arranque equivocado.** (Visto 2026-09-01.) Las líneas `[localMcpBridge] no stdio servers connected` se acumulan de arranques anteriores; un `Select-String` sin filtrar devuelve la de hace horas y parece que el arranque actual falló — con el config correcto y el puerto escuchando. → Anota la hora justo después del `Stop-Process` y compárala con los timestamps del log. Además de `Connected to revit-mcp (N tools)`, la señal inequívoca de éxito es una **lista enorme de nombres `revit-mcp__*`** en el log (`revit-mcp__get_project_info`, `revit-mcp__tag_all_walls`, `revit-mcp__export_to_excel`…).
 
+27. **Sin admin y sin Node en el sistema, corre el instalador con `-SkipNodeCheck`.** (Visto 2026-09-09, máquina `M4TEC-EVEZGA`.) Con ese flag el STEP 4 no aparece: no hay MSI que falle (gotcha #15) ni pregunta `[1/2/3]` que contestar, y el STEP 7 configura Claude igual porque `Get-NodePath` busca el `node.exe` empaquetado por su cuenta. **Nunca la opción `3`** del wizard: activa `-SkipMcpConfig` y deja Claude sin configurar. Y precisión al gotcha #7: no es aleatorio a qué versión apunta el config — `Get-NodePath` y `Get-McpServerPath` recorren `$REVIT_YEARS` en **orden descendente**, así que siempre es **la versión más alta instalada** (aquí 2026 con 2023/2025/2026). Sabiéndolo, el bloque de verificación puede afirmar la ruta esperada en vez de descubrirla.
+
+28. **`[remote-tools-device] connecting DO bridge with: revit-mcp__…` — Claude Desktop anuncia las herramientas locales a un puente remoto.** (Visto 2026-09-09 en `main.log` de Claude Desktop Store `1.15962.1.0`; el config de esa máquina trae `remoteToolsDeviceName: "m4tec-evezga"`.) Es la primera vez que aparece y **NO está verificado** qué alcanza. Prueba pendiente, cuesta un minuto: en un chat de Cowork de esa cuenta, *"¿qué archivo de Revit está abierto?"*. Si responde con el modelo, el gotcha #10 queda parcialmente obsoleto y la Ruta C sobra para equipos con esta versión. Hasta entonces, la Ruta C sigue siendo el camino documentado.
+
 ## Diagnóstico (en orden)
 
 1. **¿Existen los archivos del server?** (sin pegar rutas largas)
@@ -195,6 +224,19 @@ Vistos en builds reales (guía @arch_ai_lab). Pásalos como instrucciones al pro
   con datos reales del modelo, respuesta **SSE** con `event: message`, y Cowork respondiendo en el
   chat. Lo que costó la jornada: el gotcha #22 (SSE) al final, y antes el #24 (token transcrito mal
   desde una captura) que disparó el #23 (veredicto de auth grabado al crear el conector).
+
+- **2026-09-09** — máquina `M4TEC-EVEZGA` de Mallol (usuario `evezga`, **sin admin**, asistido desde
+  macOS sólo con bloques de PowerShell, sin RDP ni GUI salvo *Open Server*): Plugin `v2.2.1` · Node
+  **empaquetado** `v22.22.2` (sin Node en el sistema; instalador con `-SkipNodeCheck`, gotcha #27) ·
+  **Revit 2023 / 2025 / 2026** instalados, plugin en los tres ("3 version(s) installed"), config
+  apuntando a 2026 · **Claude Desktop de Microsoft Store `1.15962.1.0`** · PowerShell 5.1, Windows
+  build 26100. `install.ps1` de `main` con SHA-256
+  `cc00cd86376e53c548d642b295adc63f7af93d784a7104aa6ab9402dc7a49b77`, comparado contra la copia
+  revisada en la Mac. **Cero gotchas**: siete bloques con compuerta (ver «Flujo 100 % por terminal»),
+  0 procesos de Claude antes de instalar, respaldo del config, `8080` apareció junto a un `8088`
+  ajeno (gotcha #16), `Connected to revit-mcp (138 tools)` once segundos después del arranque
+  medido, `revit-mcp sigue en config: True` tras arrancar, y respuesta con datos del modelo de
+  muestra en un chat normal. Novedad sin verificar: gotcha #28.
 
 ### Verificadores rápidos (ejecutar en la Windows)
 
