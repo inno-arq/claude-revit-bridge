@@ -12,7 +12,8 @@
 #   4 -> 4b: todo True, Claude sigue en 0 (PowerShell no ve la BOM: eso lo prueba el 4b, gotcha #29)
 #   4b -> 5: "escrito sin BOM", "config despues: bytes 123,...   node: OK", "revit-mcp en config despues: True"
 #            (bloque 4b añadido el 2026-09-14 en M4MEP-LZUANICH)
-#   5 -> 6 : Revit con modelo abierto, Revit MCP Switch -> Open Server pulsado (único paso con mouse)
+#   5 -> 6 : Revit con modelo abierto, Revit MCP Switch pulsado UNA vez y el aviso "Open Server" CERRADO
+#            (único paso con mouse; con el aviso abierto Claude recibe timeouts, gotcha #6)
 #   6 -> 7 : "8080 escucha por: Revit" y "Connected to revit-mcp (N tools)" con hora POSTERIOR al arranque
 #   7 -> fin: "revit-mcp sigue en config: True"; después la pregunta en un chat normal de Claude Desktop
 
@@ -101,7 +102,7 @@ if ((Get-Process Claude -EA SilentlyContinue | Measure-Object).Count -eq 0) { Co
 $f = Get-ChildItem "C:\ProgramData\Autodesk\RVT 20*\Samples" -Filter *.rvt -EA SilentlyContinue | Where-Object Name -notlike "*family*" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 "muestra: $f"
 Start-Process "C:\Program Files\Autodesk\Revit 2026\Revit.exe" -ArgumentList "`"$f`""
-# Luego, con mouse: Always Load (si aparece) -> Add-Ins -> Revit MCP Switch -> Open Server.
+# Luego, con mouse: Always Load (si aparece) -> Add-Ins -> Revit MCP Switch -> cerrar el aviso "Open Server".
 
 # --- bloque 6: puerto 8080, arrancar Claude, leer log ---
 $ids = @((Get-Process Revit -EA SilentlyContinue).Id)

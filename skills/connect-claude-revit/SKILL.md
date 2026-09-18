@@ -43,7 +43,7 @@ Todo en PowerShell **dentro de la Windows**:
    ```
    En el wizard: `1` para instalar Node.js LTS (sin admin y sin Node en el sistema, mejor pasar `-SkipNodeCheck`, gotcha #27). El instalador detecta las versiones de Revit, descarga el release y configura Claude Desktop.
 3. **Quitar la BOM del config antes de abrir Claude** (gotcha #29): el instalador lo escribe con `Set-Content -Encoding UTF8` de PowerShell 5.1, y Claude puede rechazarlo y borrar `revit-mcp` si alguien pulsa *Aceptar* en el aviso. Con Claude en 0 procesos, correr el bloque 4b de [assets/ruta-a-terminal.ps1](./assets/ruta-a-terminal.ps1) o el paso 1b del [RUNBOOK.md](./RUNBOOK.md).
-4. **Encender el puente en Revit**: abre Revit **con un modelo abierto** → pestaña **Add-Ins** → panel **Revit MCP Plugin** → **Revit MCP Switch**. Esto abre el diálogo **`mcp-servers-for-revit · revitMCP`** → pulsa **Open Server** (NO "Cerrar") para arrancar el server en `localhost:8080`. Ver gotcha #6.
+4. **Encender el puente en Revit**: abre Revit **con un modelo abierto** → pestaña **Add-Ins** → panel **Revit MCP Plugin** → **Revit MCP Switch**. Eso arranca el server en `localhost:8080` y muestra el aviso **`revitMCP` · «Open Server»**: **ciérralo con *Cerrar***. Mientras siga abierto, Revit no atiende a Claude. Ver gotcha #6.
 5. **Reiniciar Claude Desktop DE VERDAD** (ver gotcha #4) y verificar en **Settings → Developer** que aparece `revit-mcp`.
 
 ### Instalación asistida con Claude Code (cualquier ruta)
@@ -66,7 +66,7 @@ los comandos sino las **compuertas entre bloques**, que se leen en la salida ant
 | 3 instalar | `install.ps1 -SkipNodeCheck` (gotcha #27) | `Installation complete! (N version(s) installed)` |
 | 4 verificar | add-in y plugin por año, `command`/`args[0]` del config existen, versión del Node empaquetado | todo `True` y Claude sigue en 0 — **no prueba que Claude pueda leer el config** (gotcha #29) |
 | 4b sin BOM | mata Claude, reescribe el config sin BOM (copia `*.con-bom.bak`), rearma `revit-mcp` desde `*.pre-revit-mcp.bak` si falta, lee con `JSON.parse` del Node empaquetado | `escrito sin BOM`, `config despues: bytes 123,…  node: OK` y `revit-mcp en config despues: True` |
-| 5 abrir Revit | lanza `Revit.exe` con una muestra de `C:\ProgramData\Autodesk\RVT 20*\Samples` | **único paso con mouse**: *Always Load* → *Revit MCP Switch* → **Open Server** |
+| 5 abrir Revit | lanza `Revit.exe` con una muestra de `C:\ProgramData\Autodesk\RVT 20*\Samples` | **único paso con mouse**: *Always Load* → *Revit MCP Switch* → **cerrar** el aviso «Open Server» (gotcha #6) |
 | 6 arrancar Claude | puertos de Revit después, `8080 escucha por: Revit`, hora de arranque, `Get-StartApps` + `shell:AppsFolder\<AppID>`, 30 s, log filtrado | `Connected to revit-mcp (N tools)` con hora posterior a la de arranque |
 | 7 config | `revit-mcp sigue en config: True` tras el arranque | la app no lo pisó al arrancar |
 
@@ -76,6 +76,14 @@ como verificación. Dos detalles que ahorran una ronda cada uno: el hash del ins
 Windows; y la app de Store se arranca con `Start-Process explorer.exe "shell:AppsFolder\$app"`,
 donde `$app` sale de `(Get-StartApps | Where-Object { $_.AppID -like "Claude_*" }).AppID`
 (aquí `Claude_pzs8sxrjxfjjc!Claude`).
+
+**Versión en dos pegados (2026-09-18):** [assets/ruta-a-dos-pegados.ps1](./assets/ruta-a-dos-pegados.ps1)
+junta los bloques 2–5 en un pegado y el 6–7 en otro. Las compuertas las evalúa el propio script, que
+se salta el resto si una falla y termina con un resumen que cabe en una captura (`LISTO PARA OPEN SERVER:
+True` / `CONECTADO en este arranque: True`). Detecta el año de Revit, la ruta del config por el archivo
+(gotcha #30) y la muestra en `ProgramData` o en `Program Files`. Es la primera opción cuando se asiste
+en remoto; la cabecera dice qué partes aún no corrieron en una Windows. Los siete bloques quedan para
+diagnosticar paso a paso.
 
 ## Ruta B — pyRevit Routes + MCP server Python
 
@@ -120,7 +128,13 @@ Cadena: `Claude Desktop → main.py (MCP, FastMCP/uv) → pyRevit Routes (localh
    $idx  = "$p\Commands\RevitMCPCommandSet\server\build\index.js"
    ```
 
-6. **El "Revit MCP Switch" NO "se pone verde" solo: abre un diálogo y hay que pulsar "Open Server".** (Plugin v2.2.1, visto 2026-06-26.) Pulsar *Revit MCP Switch* abre el modal **`mcp-servers-for-revit · revitMCP`** con un botón **Open Server** (y "Cerrar"). Hay que pulsar **Open Server** para levantar el server en `localhost:8080`; para apagarlo, el botón pasa a **Close Server**. ⚠️ Si solo cierras el modal con *Cerrar*, **el puente no arranca** y Claude no recibe datos del modelo aunque Settings → Developer muestre `revit-mcp` como `running` (ese `running` solo confirma que Claude levantó el Node, no que el add-in esté escuchando).
+6. **«Open Server» no es un botón: es un aviso modal que hay que CERRAR, o Revit no atiende a Claude.** (Corregido el 2026-09-18 en `MMAS-MDH-120`; la versión de 2026-06-26 decía lo contrario.) El código del Switch (`plugin/Core/MCPServiceConnection.cs`, v2.2.1) es:
+   ```csharp
+   service.Initialize(commandData.Application);
+   service.Start();                              // el server YA escucha en 8080
+   TaskDialog.Show("revitMCP", "Open Server");   // y después muestra este aviso modal
+   ```
+   Mientras el aviso sigue en pantalla, el comando externo no ha terminado y Revit no ejecuta ningún `ExternalEvent`: cada llamada de Claude espera hasta el timeout del server (`ConnectionManager.ts`, 120 s por defecto). En `MMAS-MDH-120`, `8080 escucha por: Revit`, Claude cargó las herramientas y **`workflow_model_audit`, `check_model_health` y `get_project_info` dieron timeout**. Después de cerrar el aviso, `get_project_info` devolvió *Snowdon Towers* con 19 niveles. → **Pulsar el Switch una vez y cerrar el aviso con *Cerrar*.** **No pulsar el Switch otra vez**: con el server encendido, ejecuta `service.Stop()` y muestra «Close Server». Si Claude sigue dando timeout con el aviso cerrado, busca otro diálogo abierto en Revit. El log del plugin está en `%APPDATA%\Autodesk\Revit\Addins\<año>\revit_mcp_plugin\logs\mcp-<fecha>.log`. Y un `running` en Settings → Developer solo confirma que Claude levantó el Node, no que Revit responda.
 
 7. **Con varias versiones de Revit instaladas, el instalador las configura todas pero Claude apunta a UNA.** (Visto 2026-06-26: detectó e instaló en **2023, 2024 y 2026** — "3 version(s) installed".) El add-in queda en las tres carpetas, pero `claude_desktop_config.json` apunta al `node.exe`/`index.js` de **una sola** versión. **No importa cuál** ni que coincida con la que abras: el server se conecta por `localhost:8080` a *cualquier* Revit con el Switch encendido. → Para diagnosticar, no asumas el año: mira la ruta **real** en Settings → Developer y úsala en los comandos de abajo.
 
@@ -175,6 +189,9 @@ Cadena: `Claude Desktop → main.py (MCP, FastMCP/uv) → pyRevit Routes (localh
       & $node -e "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log('OK')}catch(e){console.log('FALLA: '+e.message)}" $cfg
       ```
     - Si el aviso ya apareció: **no pulsar *Aceptar***; matar Claude y correr el bloque 4b. En `M4MEP-LZUANICH` tomó la rama de recuperación y después dio `Connected to revit-mcp (138 tools)`, con la entrada intacta tras arrancar.
+
+30. **Claude Desktop de Store con el config en el `%APPDATA%\Claude` real, no en la ruta virtualizada.** (Visto 2026-09-18, máquina `MMAS-MDH-120`, usuario `aalzamora`.) La app es la de Store (`Claude_pzs8sxrjxfjjc!Claude` en `Get-StartApps`), pero el bloque 1 dio `cfg appdata: True   cfg store: False`. El config que la app usa, con las preferencias de Cowork y `remoteToolsDeviceName: "mmas-mdh-120"`, está en `C:\Users\aalzamora\AppData\Roaming\Claude\`. Los bloques 2–7 de [assets/ruta-a-terminal.ps1](./assets/ruta-a-terminal.ps1) asumen la ruta MSIX del gotcha #8 y en un equipo así apuntan a un archivo que no existe. → Elegir la ruta según exista el **archivo** `claude_desktop_config.json`, no la carpeta, como hace [assets/ruta-a-dos-pegados.ps1](./assets/ruta-a-dos-pegados.ps1). Con el config en `AppData`, Claude cargó `revit-mcp` y respondió con datos del modelo.
+    - **Sin explicar:** el paso 2 buscó `Connected to revit-mcp` en `AppData\Roaming\Claude\logs\main.log` y dio `False` dos veces, aunque Claude tenía las herramientas. Puede que esta variante escriba los logs en otra carpeta, o que Claude ya estuviera abierto (`Start-Process` solo lo trae al frente y no hay arranque que leer). Por eso el paso 2 del asset cierra Claude antes y lee las dos carpetas. **Sin verificar.**
 
 ## Diagnóstico (en orden)
 
@@ -266,6 +283,18 @@ Vistos en builds reales (guía @arch_ai_lab). Pásalos como instrucciones al pro
   conviene comparar el hash dentro de PowerShell (`-eq` → `True`/`False`) en vez de leer 64 caracteres
   de una captura (gotcha #24). Guía para IT derivada de esta instalación (8 pasos generalizados,
   identidad Mallol, borrador): https://claude.ai/code/artifact/023169c0-9fb8-497b-8d84-764cb6c3cfb6
+
+- **2026-09-18** — máquina `MMAS-MDH-120` (usuario `aalzamora`, asistido desde macOS por Chrome Remote
+  Desktop con capturas): Plugin `v2.2.1` · mismo `install.ps1` (`cc00cd86…`, recomprobado en la Mac ese
+  día) · **Claude Desktop de Store** con el config en `%APPDATA%\Claude` (gotcha #30) · Revit 2026 abierto
+  con `Snowdon Towers Sample Structural.rvt` de `C:\Program Files\Autodesk\Revit 2026\Samples`. Primera
+  instalación con **dos pegados** en vez de siete bloques. El resumen del paso 1 no llegó en captura. El
+  paso 2 dio `8080 escucha por: Revit` y `revit-mcp sigue en config: True`, pero `CONECTADO: False`
+  (gotcha #30). Las tres primeras llamadas de Claude (`workflow_model_audit`, `check_model_health`,
+  `get_project_info`) dieron **timeout con el aviso «Open Server» abierto**: el gotcha #6 se corrigió ese
+  día leyendo el código del plugin. Después de indicar que se cerrara, `get_project_info` devolvió
+  *Snowdon Towers*, 19 niveles y 6 vínculos en Claude Desktop. **Verificado end-to-end.** Sin anotar:
+  admin y versiones de Revit instaladas, que quedaron fuera de las capturas.
 
 ### Verificadores rápidos (ejecutar en la Windows)
 
@@ -549,7 +578,7 @@ registrar la tarea del watchdog, arrancar todo y **verificar los cinco códigos*
 ### Orden de despliegue por equipo (~40 min)
 
 1. **Ruta A** con `install.ps1` — sin admin, plugin en todas las versiones soportadas (~20 min).
-2. Revit abierto, un `.rvt` de prueba, **Open Server** pulsado; comprobar `8080` en escucha.
+2. Revit abierto, un `.rvt` de prueba, Switch pulsado **y el aviso «Open Server» cerrado** (gotcha #6); comprobar `8080` en escucha.
 3. Pedir a quien administre Cloudflare el túnel y el hostname, con Service **`http://127.0.0.1:8000`**.
 4. `deploy-revit-bridge.ps1 -PublicHostname <host>` (~10 min, incluye su propia verificación).
 5. Un Owner publica el conector: **Organization settings → Connectors → Add → Custom → Web**,

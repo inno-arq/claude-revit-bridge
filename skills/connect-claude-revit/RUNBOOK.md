@@ -89,11 +89,11 @@ Get-ChildItem "$env:APPDATA\Autodesk\Revit\Addins\2023\revit_mcp_plugin" -Recurs
 1. Abre **Revit** y **abre un modelo** (uno de prueba, o crea un proyecto nuevo en blanco).
    - Si aparece el aviso **"Security - Unsigned Add-In"**, elige **Always Load**.
 2. Ve a la pestaña **Add-Ins** → aparece el panel **Revit MCP Plugin** (botones: *Revit MCP Switch*, *MCP Panel*, *Settings*).
-3. Clic en **Revit MCP Switch** → se abre el diálogo **`mcp-servers-for-revit · revitMCP`** → pulsa **Open Server** (NO "Cerrar"). Eso arranca el server en `localhost:8080`; para apagarlo, el botón pasa a **Close Server**.
+3. Clic en **Revit MCP Switch**, **una sola vez**. El server arranca en `localhost:8080` y Revit muestra el aviso **`revitMCP`** con el texto «Open Server». **Ciérralo con *Cerrar*.** «Open Server» no es un botón: confirma que el server ya arrancó.
 
-> ⚠️ **El Switch NO "se pone verde" solo** — abre ese diálogo. Si solo lo cierras con *Cerrar*, el puente **no arranca** (y Claude no recibirá datos aunque marque `revit-mcp` como `running`).
+> ⚠️ **No dejes abierto el aviso «Open Server».** Es modal: mientras esté en pantalla, Revit no ejecuta nada que venga de fuera y Claude recibe *timeout* en todas las herramientas, aunque el `8080` esté en escucha (visto 2026-09-18). **Y no pulses el Switch otra vez: lo apaga** (aviso «Close Server»).
 > ⚠️ **Si el botón Switch está gris:** es porque **no hay un modelo abierto**. Abre cualquier proyecto y se activa.
-> **El puente solo vive con el modelo abierto y el server (Open Server) encendido.** Si cierras el modelo, se corta.
+> **El puente solo vive con el modelo abierto y el server encendido (Switch pulsado una vez, aviso cerrado).** Si cierras el modelo, se corta.
 
 ---
 
@@ -136,8 +136,9 @@ Si responde con datos reales del modelo → **listo, está conectado.** 🎯
 | **Settings → Developer vacío**, solo *Edit Config* | Claude no se reinició de verdad | `Get-Process Claude \| Stop-Process -Force` → reabrir |
 | `Test-Path` da `Illegal characters in path` y `False` | La ruta larga se partió al pegar en el terminal remoto | Usa rutas cortas con `$env:APPDATA` o variables (ver abajo). El `False` es falso, no significa que falte el archivo |
 | Claude reinició pero no ve la tool | El server no arranca | Pruébalo a mano (ver "Diagnóstico avanzado") y revisa logs |
-| Pulsé el Switch pero no pasa nada / no sé qué hacer | El Switch abre un diálogo, no "se pone verde" | En el modal `mcp-servers-for-revit · revitMCP` pulsa **Open Server** (no "Cerrar") |
-| `revit-mcp` aparece `running` pero Claude no devuelve datos del modelo | No pulsaste **Open Server**, o el modelo está cerrado | Abre el modelo, pulsa **Open Server** en Revit; `running` solo dice que Claude levantó el Node, no que el add-in escuche |
+| Pulsé el Switch y salió un aviso «Open Server» | Es la confirmación: el server ya arrancó | Ciérralo con **Cerrar**. No pulses el Switch otra vez: lo apaga |
+| Claude carga `revit-mcp` pero **todas las herramientas dan timeout** | El aviso «Open Server» (u otro diálogo) sigue abierto en Revit y lo bloquea | Cierra el diálogo y pide *«reintenta»* en el mismo chat |
+| `revit-mcp` aparece `running` pero Claude no devuelve datos del modelo | Modelo cerrado, Switch sin pulsar o apagado con un segundo clic | Abre el modelo, pulsa el Switch **una vez** y cierra el aviso; `running` solo dice que Claude levantó el Node, no que el add-in escuche |
 | El server no levanta en `localhost:8080` | Puerto `8080` ocupado por otra app | Libera el puerto 8080 |
 
 ### Diagnóstico avanzado
