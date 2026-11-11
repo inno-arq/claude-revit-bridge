@@ -1,13 +1,14 @@
 {
   "name": "revit-bridge",
-  "displayName": "Revit Bridge (Claude ↔ Revit MCP)",
-  "description": "Instala, diagnostica y documenta el puente Claude Desktop ↔ Autodesk Revit vía MCP. Ruta A: add-in C# de LuDattilo (instalador 1-clic); Ruta B: pyRevit Routes + MCP server Python. Incluye instalación guiada por situación y árbol de diagnóstico.",
-  "version": "1.0.0",
+  "displayName": "Revit Bridge",
+  "description": "Connect Claude to Autodesk Revit. Query models, count elements, analyze rooms, check quality, and make modifications - all from Claude. Works with Revit 2023-2027.",
+  "version": "2.0.0",
   "author": {
-    "name": "Ulises González",
-    "email": "gonzalez.ulises@gmail.com"
+    "name": "Mallol Arquitectos",
+    "email": "inno@mallolarquitectos.com"
   },
   "repository": "https://github.com/inno-arq/claude-revit-bridge",
+  "homepage": "https://revit.mallol.dev",
   "license": "MIT",
-  "keywords": ["revit", "mcp", "aec", "bim", "pyrevit", "claude-desktop"]
+  "keywords": ["revit", "mcp", "aec", "bim", "architecture", "autodesk", "construction"]
 }
