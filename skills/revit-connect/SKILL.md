@@ -1,92 +1,113 @@
 ---
 name: revit-connect
-description: Connect Claude to your Revit instance. Use when users say "connect to Revit", "setup Revit", "I want to use Revit with Claude", or ask how to link their Revit model.
+description: Connect Claude to Revit automatically. Use when users say "connect to Revit", "open my Revit", "I want to use Revit", or ask about their Revit model. Detects the user's device automatically by email.
 tools: []
 ---
 
 # Connect Claude to Revit
 
-Guide users through connecting their Revit installation to Claude via Revit Bridge.
+Revit Bridge connects Claude to Autodesk Revit running on Windows. Once installed, connection is automatic - no credentials to copy.
 
-## Overview
+## How it works
 
-Revit Bridge allows Claude to interact with Autodesk Revit running on Windows. The connection requires:
-1. A Windows PC with Revit installed
-2. The Revit Bridge installer (one-time setup)
-3. Revit open with a model and the MCP switch activated
+1. User installs Revit Bridge on their Windows PC (one time)
+2. User opens Revit and activates the MCP switch
+3. Claude detects their device automatically by email
 
-## Installation Steps
+## Check if user has Revit Bridge installed
 
-### For the user to run on their Windows PC:
+Make a request to the hub to check if this user has a registered device:
 
-**Option A: One-liner install (recommended)**
+```
+GET https://revit-hub-476812260498.us-central1.run.app/discover?email={user_email}
+```
+
+- If **200 with `online: true`**: User is ready, proceed to query their model
+- If **200 with `online: false`**: Device registered but Revit not running. Ask user to open Revit and activate the switch.
+- If **404**: User needs to install Revit Bridge first
+
+## Installation instructions (for new users)
+
+Tell the user to run this in PowerShell on their Windows PC:
+
 ```powershell
 irm https://raw.githubusercontent.com/inno-arq/claude-revit-bridge/main/installer/setup-revit-bridge.ps1 | iex
 ```
 
-**Option B: Download and review first**
-```powershell
-cd $env:USERPROFILE\Downloads
-irm https://raw.githubusercontent.com/inno-arq/claude-revit-bridge/main/installer/setup-revit-bridge.ps1 -OutFile setup.ps1
-notepad setup.ps1
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
+The installer will:
+1. Ask for their email (must match their Claude account)
+2. Install the Revit plugin automatically
+3. Set up the connection tunnel
+4. Configure auto-start
+
+After installation, they just need to:
+1. Open Revit with a model
+2. Click **Add-Ins → Revit MCP Switch**
+3. **Close** the "Open Server" dialog
+
+## Querying Revit (once connected)
+
+To interact with the user's Revit, make POST requests to:
+
+```
+POST https://revit-hub-476812260498.us-central1.run.app/connect
+Content-Type: application/json
+
+{
+  "_email": "{user_email}",
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list"
+}
 ```
 
-### After installation:
+The `_email` field routes the request to the correct device automatically.
 
-The installer will display:
-- **Device ID**: A short identifier for this PC
-- **API Key**: A secret key for authentication
+### Common methods:
 
-The user needs to:
-1. Open Revit with a project file (.rvt)
-2. Go to **Add-Ins** tab → **Revit MCP Switch** → Click it
-3. **Close** the "Open Server" dialog (don't leave it open!)
-4. Come back to Claude and provide their Device ID and API Key
+**List available tools:**
+```json
+{"_email": "user@example.com", "jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+```
 
-## Setting up the connection in Claude
+**Call a tool:**
+```json
+{
+  "_email": "user@example.com",
+  "jsonrpc": "2.0", 
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "get_project_info",
+    "arguments": {}
+  }
+}
+```
 
-Once the user has their credentials:
-
-1. Ask them for their Device ID and API Key
-2. Build the connector URL: `https://revit-hub-476812260498.us-central1.run.app/mcp/{deviceId}/{apiKey}`
-3. Guide them to add the connector:
-   - **In Cowork**: Settings → Connectors → Add → Custom MCP → paste URL → No authentication
-   - **In Claude Desktop**: Add to `claude_desktop_config.json` under `mcpServers`
-   
-4. Once added, the `revit-hub` tools will appear and you can query their model
+### Useful tools:
+- `get_project_info` - Model name, number, address
+- `get_levels` - All levels with elevations
+- `get_rooms` - Rooms with areas
+- `get_walls` / `get_doors` / `get_windows` - Elements by category
+- `get_model_stats` - Element counts
+- `check_model_health` - Quality audit
 
 ## Troubleshooting
 
-### "Device not found"
-- The Windows PC may have restarted. Ask user to run the watchdog: `powershell -File "$env:USERPROFILE\revit-bridge\watchdog.ps1"`
+### "No device registered"
+User needs to run the installer with the same email they use in Claude.
 
-### "Device unreachable" (502)
-- Check that Revit is open with a model
-- Check that the MCP Switch was activated (and the dialog closed)
-- Check that cloudflared is running: `Get-Process cloudflared`
+### "Device unreachable" 
+- Is Revit open with a model?
+- Did they click the MCP Switch?
+- Is the "Open Server" dialog closed?
 
-### Timeout on tool calls
-- The "Open Server" dialog may still be open in Revit - must be closed
-- Check for other modal dialogs in Revit
+### Timeouts
+The "Open Server" dialog blocks Revit. It must be **closed**, not left open.
 
-## Supported Revit Versions
+## Important notes
 
-- Revit 2023
-- Revit 2024
-- Revit 2025
-- Revit 2026
-- Revit 2027
-
-## What you can do once connected
-
-With Revit connected, Claude can:
-- Query model information (levels, rooms, elements)
-- Count and analyze elements by category
-- Export schedules and data
-- Create and modify elements (with caution)
-- Run quality audits
-- Check for clashes
-- And 130+ more operations
-
-Always start with read-only queries to verify the connection before attempting modifications.
+- The user's email in Claude must match the email they used in the installer
+- Revit must have a `.rvt` project open (not a family `.rfa`)
+- The MCP Switch must be activated each time Revit opens
+- Start with read-only queries before attempting modifications

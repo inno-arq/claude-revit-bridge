@@ -30,7 +30,8 @@
 param(
     [string]$HubUrl = "https://revit-hub-476812260498.us-central1.run.app",
     [string]$TunnelToken = "",
-    [string]$DeviceName = $env:COMPUTERNAME
+    [string]$DeviceName = $env:COMPUTERNAME,
+    [string]$Email = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +63,20 @@ Write-Host ""
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host "   REVIT BRIDGE - Setup Wizard" -ForegroundColor Cyan
 Write-Host "=====================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Get user email if not provided
+if (-not $Email) {
+    Write-Host "Para conectar tu Revit con Claude, necesito tu email." -ForegroundColor Yellow
+    Write-Host "(Usa el mismo email con el que accedes a Claude)" -ForegroundColor Gray
+    Write-Host ""
+    $Email = Read-Host "Tu email"
+
+    if (-not $Email -or $Email -notmatch "^[\w\.-]+@[\w\.-]+\.\w+$") {
+        Write-Host "Email invalido. Vuelve a ejecutar el instalador." -ForegroundColor Red
+        exit 1
+    }
+}
 Write-Host ""
 
 New-Item -ItemType Directory -Force -Path $BridgeDir | Out-Null
@@ -228,6 +243,7 @@ Write-Host "[5/5] Registrando en Revit Hub..." -ForegroundColor Green
 $fullUrl = "$tunnelUrl/mcp/$mcpToken"
 $registerBody = @{
     tunnelUrl = $fullUrl
+    email = $Email
     metadata = @{
         deviceName = $DeviceName
         revitYear = $revitYear
@@ -278,26 +294,15 @@ Write-Host "=====================================" -ForegroundColor Green
 Write-Host "   INSTALACION COMPLETADA!" -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Tu equipo esta listo para conectarse con Claude." -ForegroundColor White
-Write-Host ""
-Write-Host "CREDENCIALES PARA CLAUDE:" -ForegroundColor Cyan
-Write-Host "-------------------------" -ForegroundColor Cyan
-Write-Host "Device ID:  $deviceId" -ForegroundColor Yellow
-Write-Host "API Key:    $apiKey" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "URL del conector MCP:" -ForegroundColor Cyan
-Write-Host "$HubUrl/mcp/$deviceId/$apiKey" -ForegroundColor Yellow
+Write-Host "Tu Revit esta conectado a Claude con el email:" -ForegroundColor White
+Write-Host "  $Email" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "SIGUIENTE PASO:" -ForegroundColor Green
-Write-Host "1. Abre Revit con un modelo" -ForegroundColor White
+Write-Host "1. Abre Revit con un modelo (.rvt)" -ForegroundColor White
 Write-Host "2. Ve a Add-Ins > Revit MCP Switch > click" -ForegroundColor White
-Write-Host "3. CIERRA el dialogo 'Open Server'" -ForegroundColor White
-Write-Host "4. En Claude, pregunta: '?Que archivo de Revit esta abierto?'" -ForegroundColor White
+Write-Host "3. CIERRA el dialogo 'Open Server' (importante!)" -ForegroundColor White
+Write-Host "4. En Claude, pregunta: 'Que archivo de Revit tengo abierto?'" -ForegroundColor White
 Write-Host ""
-Write-Host "Las credenciales se guardaron en: $BridgeDir\credentials.json" -ForegroundColor Gray
+Write-Host "Eso es todo. Claude detectara tu Revit automaticamente." -ForegroundColor Green
 Write-Host ""
-
-# Copy URL to clipboard
-$clipUrl = "$HubUrl/mcp/$deviceId/$apiKey"
-Set-Clipboard -Value $clipUrl
-Write-Host "(URL copiada al portapapeles)" -ForegroundColor Gray
+Write-Host "(Credenciales guardadas en: $BridgeDir\credentials.json)" -ForegroundColor Gray

@@ -10,8 +10,11 @@ const PORT = Number(process.env.PORT || 8080);
 const HUB_SECRET = process.env.HUB_SECRET || '';  // For admin operations
 
 // In-memory registry (production would use Firestore/Redis)
-// device_id -> { tunnelUrl, apiKey, lastSeen, metadata }
+// device_id -> { tunnelUrl, apiKey, lastSeen, metadata, ownerEmail }
 const devices = new Map();
+
+// Email -> device_id mapping for auto-discovery
+const emailToDevice = new Map();
 
 // Generate secure tokens
 function generateToken(length = 32) {
@@ -101,7 +104,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Register device: POST /register
-    // Body: { tunnelUrl, metadata? }
+    // Body: { tunnelUrl, email, metadata? }
     // Returns: { deviceId, apiKey }
     if (parts[0] === 'register' && req.method === 'POST') {
       const body = await parseBody(req);
@@ -111,20 +114,89 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'tunnelUrl required' }));
       }
 
-      const deviceId = generateToken(8);  // Short, user-friendly ID
-      const apiKey = generateToken(32);   // Long secret for auth
+      if (!body.email) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'email required' }));
+      }
 
-      devices.set(deviceId, {
-        tunnelUrl: body.tunnelUrl,
-        apiKey,
-        lastSeen: Date.now(),
-        metadata: body.metadata || {},
-      });
+      const email = body.email.toLowerCase().trim();
 
-      console.log(`[hub] registered device ${deviceId} -> ${body.tunnelUrl}`);
+      // Check if this email already has a device - update it
+      let deviceId = emailToDevice.get(email);
+      let apiKey;
+
+      if (deviceId && devices.has(deviceId)) {
+        const existing = devices.get(deviceId);
+        apiKey = existing.apiKey;
+        existing.tunnelUrl = body.tunnelUrl;
+        existing.lastSeen = Date.now();
+        existing.metadata = { ...existing.metadata, ...body.metadata };
+        console.log(`[hub] updated device ${deviceId} for ${email}`);
+      } else {
+        deviceId = generateToken(8);
+        apiKey = generateToken(32);
+
+        devices.set(deviceId, {
+          tunnelUrl: body.tunnelUrl,
+          apiKey,
+          lastSeen: Date.now(),
+          metadata: body.metadata || {},
+          ownerEmail: email,
+        });
+
+        emailToDevice.set(email, deviceId);
+        console.log(`[hub] registered device ${deviceId} for ${email}`);
+      }
 
       res.writeHead(201, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ deviceId, apiKey }));
+      return res.end(JSON.stringify({ deviceId, apiKey, email }));
+    }
+
+    // Auto-connect by email: POST /connect
+    // Body: JSON-RPC + email field
+    // Routes automatically to the user's device
+    if (parts[0] === 'connect' && req.method === 'POST') {
+      const body = await parseBody(req);
+      const email = body._email?.toLowerCase().trim();
+
+      if (!email) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: { code: -32602, message: '_email field required' }
+        }));
+      }
+
+      const deviceId = emailToDevice.get(email);
+      if (!deviceId) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: {
+            code: -32000,
+            message: 'No Revit device registered for ' + email + '. Run the installer on your Windows PC first.'
+          }
+        }));
+      }
+
+      const device = devices.get(deviceId);
+      if (!device) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id,
+          error: { code: -32000, message: 'Device configuration error' }
+        }));
+      }
+
+      device.lastSeen = Date.now();
+
+      // Forward without the _email field
+      const { _email, ...rpcPayload } = body;
+      await proxyToDevice(device, req, res, rpcPayload);
+      return;
     }
 
     // Update device: POST /devices/:id/heartbeat
