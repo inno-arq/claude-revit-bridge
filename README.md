@@ -1,5 +1,12 @@
 # Revit Bridge
 
+<img alt="Versión" src="https://img.shields.io/badge/plugin-2.0.0-informational">
+<img alt="Visibilidad" src="https://img.shields.io/badge/repo-uso%20interno%20Mallol-lightgrey">
+<img alt="Revit" src="https://img.shields.io/badge/Revit-2023--2027-0696D7?logo=autodesk&logoColor=white">
+<img alt="Node.js" src="https://img.shields.io/badge/Node.js-22-339933?logo=nodedotjs&logoColor=white">
+<img alt="Cloud Run" src="https://img.shields.io/badge/Google%20Cloud%20Run-4285F4?logo=googlecloud&logoColor=white">
+<img alt="Licencia" src="https://img.shields.io/badge/licencia-MIT-blue">
+
 Connect Claude to Autodesk Revit. Query your models, analyze elements, check quality, and make modifications - all through natural conversation.
 
 ## Quick Start
@@ -162,3 +169,29 @@ Then point installers to your hub:
 ## License
 
 MIT
+
+## Estructura del repositorio
+
+```
+.claude-plugin/  manifiesto del plugin y del marketplace
+skills/          skills de Claude: connect-claude-revit, revit-connect, revit-diagnose, revit-install, revit-modify, revit-query
+installer/       instalador para Windows (PowerShell, .bat y Inno Setup)
+hub/             Revit Hub: registro y enrutador de dispositivos (Node.js, Cloud Run)
+docs/            página de documentación
+```
+
+## Stack
+
+Node.js 22 (hub y gateway) · PowerShell (instalador) · plugin C# de Revit de terceros · Cloudflare Tunnel · Google Cloud Run + Cloud Build (hub).
+
+## Configuración
+
+Variables de entorno del hub: `HUB_SECRET` y `PORT`. El gateway lee `PORT`, `MCP_COMMAND`, `MCP_ARGS`, `MCP_TOKEN` y `RPC_TIMEOUT_MS`. Solo nombres; los valores no van en el repo.
+
+## Documentación
+
+Procedimiento detallado e imprimible para IT: [`skills/connect-claude-revit/RUNBOOK.md`](skills/connect-claude-revit/RUNBOOK.md).
+
+## Propietario
+
+Oficina de Innovación de Mallol.
